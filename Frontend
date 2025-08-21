@@ -1,0 +1,196 @@
+import streamlit as st
+import pandas as pd
+from datetime import date
+import backend_fitness as db
+import uuid
+
+# --- Streamlit UI Components ---
+st.set_page_config(page_title="Personal Fitness Tracker", layout="wide")
+
+st.title("🏋️ Personal Fitness Tracker")
+
+# Dropdown to select a user (for login/context)
+all_users_data = db.read_users()
+user_names = [user[1] for user in all_users_data]
+user_name_to_id = {user[1]: user[0] for user in all_users_data}
+
+st.sidebar.header("User Selection")
+selected_user_name = st.sidebar.selectbox("Select a User", ["(New User)"] + user_names)
+
+if selected_user_name == "(New User)":
+    st.sidebar.write("### Create New User")
+    new_user_name = st.sidebar.text_input("Name")
+    new_user_email = st.sidebar.text_input("Email")
+    new_user_weight = st.sidebar.number_input("Weight (kg)", min_value=0.0)
+    if st.sidebar.button("Create User"):
+        if new_user_name and new_user_email:
+            if db.create_user(new_user_name, new_user_email, new_user_weight):
+                st.sidebar.success(f"User '{new_user_name}' created successfully!")
+                st.experimental_rerun()
+            else:
+                st.sidebar.error("Could not create user. Email may already be in use.")
+        else:
+            st.sidebar.warning("Please fill in all fields.")
+    selected_user_id = None
+else:
+    selected_user_id = user_name_to_id.get(selected_user_name)
+
+st.header(f"Hello, {selected_user_name}!")
+
+if selected_user_id:
+    # --- CRUD Sections ---
+    st.subheader("📊 My Dashboard")
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Workouts", "Goals", "Friends", "Insights", "User Settings"])
+
+    # Tab 1: Workouts
+    with tab1:
+        st.write("### Log a New Workout")
+        col1, col2 = st.columns(2)
+        with col1:
+            workout_date = st.date_input("Date", value=date.today())
+        with col2:
+            duration = st.number_input("Duration (minutes)", min_value=1)
+
+        st.write("#### Add Exercises")
+        exercise_name = st.text_input("Exercise Name")
+        reps = st.number_input("Reps", min_value=1, value=1)
+        sets = st.number_input("Sets", min_value=1, value=1)
+        weight_lifted = st.number_input("Weight Lifted (kg)", min_value=0.0)
+
+        if st.button("Save Workout"):
+            workout_id = db.create_workout(selected_user_id, workout_date, duration)
+            if workout_id:
+                if exercise_name:
+                    if db.create_exercise(workout_id, exercise_name, reps, sets, weight_lifted):
+                        st.success("Workout and exercise logged successfully!")
+                    else:
+                        st.error("Failed to log exercise.")
+                else:
+                    st.success("Workout logged successfully!")
+            else:
+                st.error("Failed to log workout.")
+
+        st.write("---")
+        st.write("### My Workout History")
+        workouts = db.read_workouts_by_user(selected_user_id)
+        if workouts:
+            df = pd.DataFrame(workouts, columns=['Date', 'Duration (min)', 'Exercise', 'Reps', 'Sets', 'Weight Lifted (kg)'])
+            st.dataframe(df)
+        else:
+            st.info("No workout history found. Log a new workout to get started!")
+
+    # Tab 2: Goals
+    with tab2:
+        st.write("### Set a New Goal")
+        goal_desc = st.text_area("Goal Description (e.g., 'Run 5km without stopping')")
+        target_val = st.number_input("Target Value (e.g., total duration, reps)", min_value=1)
+        if st.button("Save Goal"):
+            if goal_desc and target_val:
+                if db.create_goal(selected_user_id, goal_desc, target_val):
+                    st.success("Goal saved!")
+                else:
+                    st.error("Failed to save goal.")
+            else:
+                st.warning("Please fill in all fields.")
+
+        st.write("---")
+        st.write("### My Current Goals")
+        goals = db.read_goals_by_user(selected_user_id)
+        if goals:
+            goals_df = pd.DataFrame(goals, columns=['Goal ID', 'Description', 'Target Value', 'Completed'])
+            st.dataframe(goals_df)
+            st.write("#### Update Goal Status")
+            goal_ids = [goal[0] for goal in goals]
+            goal_to_update = st.selectbox("Select Goal to Update", goal_ids)
+            is_completed_status = st.checkbox("Mark as Completed", value=False)
+            if st.button("Update Status"):
+                if db.update_goal_status(goal_to_update, is_completed_status):
+                    st.success("Goal status updated!")
+                    st.experimental_rerun()
+                else:
+                    st.error("Failed to update goal status.")
+        else:
+            st.info("You haven't set any goals yet.")
+
+    # Tab 3: Friends
+    with tab3:
+        st.write("### Add a Friend")
+        friend_name = st.text_input("Enter friend's name to add")
+        if st.button("Add Friend"):
+            friend_id = db.get_user_id_by_name(friend_name)
+            if friend_id and friend_id != selected_user_id:
+                if db.add_friend(selected_user_id, friend_id):
+                    st.success(f"You are now friends with {friend_name}!")
+                    st.experimental_rerun()
+                else:
+                    st.error(f"Failed to add {friend_name} as a friend.")
+            else:
+                st.warning("User not found or you cannot add yourself.")
+
+        st.write("---")
+        st.write("### My Friends")
+        friends = db.read_friends_by_user(selected_user_id)
+        if friends:
+            friends_df = pd.DataFrame(friends, columns=['Friend ID', 'Name'])
+            st.dataframe(friends_df)
+        else:
+            st.info("You have no friends yet. Time to connect!")
+
+        st.write("---")
+        st.write("### Community Leaderboard")
+        leaderboard_data = db.get_leaderboard_data()
+        if leaderboard_data:
+            leaderboard_df = pd.DataFrame(leaderboard_data, columns=['User', 'Total Duration (minutes)'])
+            st.dataframe(leaderboard_df)
+        else:
+            st.info("No workout data available to create a leaderboard.")
+
+    # Tab 4: Business Insights
+    with tab4:
+        st.header("📈 Business Insights")
+        insights = db.get_business_insights()
+        if insights:
+            st.write("### Overall Fitness Stats")
+            col_a, col_b, col_c = st.columns(3)
+            col_a.metric("Total Users", insights.get('total_users', 0))
+            col_b.metric("Total Workouts", insights.get('total_workouts', 0))
+            col_c.metric("Total Workout Time", f"{insights.get('total_duration', 0):,.0f} min")
+
+            col_d, col_e, col_f = st.columns(3)
+            col_d.metric("Average Workout Time", f"{insights.get('avg_duration', 0):,.2f} min")
+            col_e.metric("Max Workout Time", f"{insights.get('max_duration', 0):,.0f} min")
+            col_f.metric("Min Workout Time", f"{insights.get('min_duration', 0):,.0f} min")
+            
+            st.write("---")
+            st.write("### Strength Training Stats")
+            col_g, col_h = st.columns(2)
+            col_g.metric("Total Weight Lifted", f"{insights.get('total_weight_lifted', 0):,.2f} kg")
+            col_h.metric("Average Weight Lifted (per exercise)", f"{insights.get('avg_weight_lifted', 0):,.2f} kg")
+
+            st.write("---")
+            st.write(f"**Most Recent Activity:** {insights.get('most_recent_workout', 'N/A')}")
+        else:
+            st.info("No data available to generate insights.")
+
+    # Tab 5: User Settings
+    with tab5:
+        st.write("### Update My Profile")
+        new_weight = st.number_input("New Weight (kg)", min_value=0.0, value=db.read_users()[user_names.index(selected_user_name)][3])
+        if st.button("Update Weight"):
+            if db.update_user_weight(selected_user_id, new_weight):
+                st.success("Weight updated successfully!")
+                st.experimental_rerun()
+            else:
+                st.error("Failed to update weight.")
+
+        st.write("---")
+        st.write("### Delete My Profile")
+        st.warning("This action cannot be undone. All your data will be permanently deleted.")
+        if st.button("Delete My Account", type="primary"):
+            if db.delete_user(selected_user_id):
+                st.success("Your account and all associated data have been deleted.")
+                st.experimental_rerun()
+            else:
+                st.error("Failed to delete account.")
+else:
+    st.info("Please select a user from the sidebar or create a new one to access the dashboard.")
