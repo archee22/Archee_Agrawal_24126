@@ -1,5 +1,4 @@
 # Archee_Agrawal_24126
-Here is a README description for the Personal Fitness Tracker application, formatted for GitHub.
 
 🏋️ Personal Fitness Tracker
 This is a personal fitness tracking application built with Python, using the Streamlit library for the interactive frontend and PostgreSQL as the backend database. The application allows a single user to log workouts, set fitness goals, and connect with friends to view a dynamic leaderboard.
