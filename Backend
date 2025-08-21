@@ -1,0 +1,336 @@
+import psycopg2
+from psycopg2 import sql
+import uuid
+import datetime
+
+# Database connection details (replace with your own)
+DB_HOST = "localhost"
+DB_NAME = "fitness_tracker"
+DB_USER = "your_username"
+DB_PASSWORD = "your_password"
+
+def get_db_connection():
+    """Establishes and returns a database connection."""
+    conn = psycopg2.connect(
+        host=DB_HOST,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD
+    )
+    return conn
+
+# --- CRUD Operations for Users ---
+def create_user(user_name, email, weight):
+    """Inserts a new user into the database."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    user_id = str(uuid.uuid4())
+    try:
+        cur.execute(
+            "INSERT INTO users (user_id, user_name, email, weight) VALUES (%s, %s, %s, %s)",
+            (user_id, user_name, email, weight)
+        )
+        conn.commit()
+        return True
+    except psycopg2.Error as e:
+        print(f"Error creating user: {e}")
+        conn.rollback()
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
+def read_users():
+    """Fetches all users from the database."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users ORDER BY user_name")
+    users = cur.fetchall()
+    cur.close()
+    conn.close()
+    return users
+
+def update_user_weight(user_id, new_weight):
+    """Updates the weight of a specific user."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE users SET weight = %s WHERE user_id = %s",
+            (new_weight, user_id)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    except psycopg2.Error as e:
+        print(f"Error updating user: {e}")
+        conn.rollback()
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
+def delete_user(user_id):
+    """Deletes a user and all their associated data (cascading delete logic)."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        # Delete related data first due to foreign key constraints
+        cur.execute("DELETE FROM friends WHERE user_id = %s OR friend_id = %s", (user_id, user_id))
+        cur.execute("DELETE FROM exercises WHERE workout_id IN (SELECT workout_id FROM workouts WHERE user_id = %s)", (user_id,))
+        cur.execute("DELETE FROM workouts WHERE user_id = %s", (user_id,))
+        cur.execute("DELETE FROM goals WHERE user_id = %s", (user_id,))
+        cur.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    except psycopg2.Error as e:
+        print(f"Error deleting user: {e}")
+        conn.rollback()
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
+# --- CRUD Operations for Workouts and Exercises ---
+def create_workout(user_id, workout_date, duration_minutes):
+    """Inserts a new workout and returns its ID."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    workout_id = str(uuid.uuid4())
+    try:
+        cur.execute(
+            "INSERT INTO workouts (workout_id, user_id, workout_date, duration_minutes) VALUES (%s, %s, %s, %s)",
+            (workout_id, user_id, workout_date, duration_minutes)
+        )
+        conn.commit()
+        return workout_id
+    except psycopg2.Error as e:
+        print(f"Error creating workout: {e}")
+        conn.rollback()
+        return None
+    finally:
+        cur.close()
+        conn.close()
+
+def create_exercise(workout_id, exercise_name, reps, sets, weight_lifted):
+    """Inserts a new exercise for a given workout."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    exercise_id = str(uuid.uuid4())
+    try:
+        cur.execute(
+            "INSERT INTO exercises (exercise_id, workout_id, exercise_name, reps, sets, weight_lifted) VALUES (%s, %s, %s, %s, %s, %s)",
+            (exercise_id, workout_id, exercise_name, reps, sets, weight_lifted)
+        )
+        conn.commit()
+        return True
+    except psycopg2.Error as e:
+        print(f"Error creating exercise: {e}")
+        conn.rollback()
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
+def read_workouts_by_user(user_id):
+    """Fetches all workouts and their exercises for a given user."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT
+            w.workout_date,
+            w.duration_minutes,
+            e.exercise_name,
+            e.reps,
+            e.sets,
+            e.weight_lifted
+        FROM workouts w
+        LEFT JOIN exercises e ON w.workout_id = e.workout_id
+        WHERE w.user_id = %s
+        ORDER BY w.workout_date DESC, e.exercise_name
+        """,
+        (user_id,)
+    )
+    workouts = cur.fetchall()
+    cur.close()
+    conn.close()
+    return workouts
+
+# --- CRUD Operations for Goals ---
+def create_goal(user_id, goal_description, target_value):
+    """Inserts a new goal."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    goal_id = str(uuid.uuid4())
+    try:
+        cur.execute(
+            "INSERT INTO goals (goal_id, user_id, goal_description, target_value) VALUES (%s, %s, %s, %s)",
+            (goal_id, user_id, goal_description, target_value)
+        )
+        conn.commit()
+        return True
+    except psycopg2.Error as e:
+        print(f"Error creating goal: {e}")
+        conn.rollback()
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
+def read_goals_by_user(user_id):
+    """Fetches all goals for a given user."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT goal_id, goal_description, target_value, is_completed FROM goals WHERE user_id = %s ORDER BY is_completed, target_value DESC",
+        (user_id,)
+    )
+    goals = cur.fetchall()
+    cur.close()
+    conn.close()
+    return goals
+
+def update_goal_status(goal_id, is_completed):
+    """Updates the completion status of a goal."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE goals SET is_completed = %s WHERE goal_id = %s",
+            (is_completed, goal_id)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    except psycopg2.Error as e:
+        print(f"Error updating goal: {e}")
+        conn.rollback()
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
+# --- CRUD Operations for Friends ---
+def add_friend(user_id, friend_id):
+    """Adds a friend relationship."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        # Add a record for both sides of the relationship
+        cur.execute(
+            "INSERT INTO friends (user_id, friend_id) VALUES (%s, %s)",
+            (user_id, friend_id)
+        )
+        cur.execute(
+            "INSERT INTO friends (user_id, friend_id) VALUES (%s, %s)",
+            (friend_id, user_id)
+        )
+        conn.commit()
+        return True
+    except psycopg2.Error as e:
+        print(f"Error adding friend: {e}")
+        conn.rollback()
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
+def read_friends_by_user(user_id):
+    """Fetches all friends of a given user."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT u.user_id, u.user_name FROM friends f JOIN users u ON f.friend_id = u.user_id WHERE f.user_id = %s",
+        (user_id,)
+    )
+    friends = cur.fetchall()
+    cur.close()
+    conn.close()
+    return friends
+
+# --- Business Insights Section ---
+def get_business_insights():
+    """Executes aggregate queries for business insights."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    insights = {}
+    try:
+        # Total number of users
+        cur.execute("SELECT COUNT(*) FROM users")
+        insights['total_users'] = cur.fetchone()[0]
+
+        # Total number of workouts
+        cur.execute("SELECT COUNT(*) FROM workouts")
+        insights['total_workouts'] = cur.fetchone()[0]
+
+        # Total duration of all workouts
+        cur.execute("SELECT SUM(duration_minutes) FROM workouts")
+        insights['total_duration'] = cur.fetchone()[0]
+
+        # Average workout duration
+        cur.execute("SELECT AVG(duration_minutes) FROM workouts")
+        insights['avg_duration'] = cur.fetchone()[0]
+
+        # Total weight lifted
+        cur.execute("SELECT SUM(weight_lifted) FROM exercises")
+        insights['total_weight_lifted'] = cur.fetchone()[0]
+
+        # Average weight lifted per rep
+        cur.execute("SELECT AVG(weight_lifted) FROM exercises")
+        insights['avg_weight_lifted'] = cur.fetchone()[0]
+
+        # Max and Min workout durations
+        cur.execute("SELECT MAX(duration_minutes), MIN(duration_minutes) FROM workouts")
+        insights['max_duration'], insights['min_duration'] = cur.fetchone()
+
+        # Most recent workout date
+        cur.execute("SELECT MAX(workout_date) FROM workouts")
+        insights['most_recent_workout'] = cur.fetchone()[0]
+
+    except psycopg2.Error as e:
+        print(f"Error fetching insights: {e}")
+        insights = {}
+    finally:
+        cur.close()
+        conn.close()
+    return insights
+
+def get_leaderboard_data():
+    """Gets leaderboard data based on total workout duration."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT
+            u.user_name,
+            SUM(w.duration_minutes) AS total_duration
+        FROM users u
+        JOIN workouts w ON u.user_id = w.user_id
+        GROUP BY u.user_name
+        ORDER BY total_duration DESC
+        LIMIT 10
+        """
+    )
+    leaderboard = cur.fetchall()
+    cur.close()
+    conn.close()
+    return leaderboard
+
+def get_user_by_id(user_id):
+    """Gets a user's name by their ID."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT user_name FROM users WHERE user_id = %s", (user_id,))
+    user = cur.fetchone()
+    cur.close()
+    conn.close()
+    return user[0] if user else None
+
+def get_user_id_by_name(user_name):
+    """Gets a user's ID by their name."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT user_id FROM users WHERE user_name = %s", (user_name,))
+    user = cur.fetchone()
+    cur.close()
+    conn.close()
+    return user[0] if user else None
